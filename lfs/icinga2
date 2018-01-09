@@ -1,7 +1,7 @@
 ###############################################################################
 #                                                                             #
 # IPFire.org - A linux based firewall                                         #
-# Copyright (C) 2007  Michael Tremer & Christian Schmidt                      #
+# Copyright (C) 2007-2012  IPFire Team  <info@ipfire.org>                     #
 #                                                                             #
 # This program is free software: you can redistribute it and/or modify        #
 # it under the terms of the GNU General Public License as published by        #
@@ -24,45 +24,34 @@
 
 include Config
 
-VER        = 1_64_0
+VER        = 2.8.0
+ICINGAWEB2_VER = 2.5.0
 
-THISAPP    = boost_$(VER)
+THISAPP    = icinga2-$(VER)
 DL_FILE    = $(THISAPP).tar.gz
-DL_FROM    = $(URL_IPFIRE)
+#DL_FROM    = $(URL_IPFIRE)
+DL_FROM    = https://github.com/Icinga/icinga2/archive
+ICINGAWEB2_DL_FROM = https://github.com/Icinga/icingaweb2/archive
 DIR_APP    = $(DIR_SRC)/$(THISAPP)
 TARGET     = $(DIR_INFO)/$(THISAPP)
+PROG       = icinga2
+PAK_VER    = 1
 
-CFLAGS    += -O3 -fno-strict-aliasing
-CXXFLAGS  += -O3 -fno-strict-aliasing
+DEPS       = "mysql apache2 php libyajl monitoring-plugins"
 
-CONFIGURE_OPTIONS = \
-	--prefix=/usr \
-	--layout=tagged \
-	--without-chrono \
-	--without-context \
-	--without-coroutine \
-	--without-coroutine2 \
-	--without-date_time \
-	--without-fiber \
-	--without-graph_parallel \
-	--without-mpi \
-	--build-dir=serial \
-	variant=release \
-	threading=single,multi \
-	debug-symbols=off \
-	pch=off \
-	cflags="$(CFLAGS)" \
-	cxxflags="$(CXXFLAGS)"
+CFLAGS    += -fno-strict-aliasing
 
 ###############################################################################
 # Top-level Rules
 ###############################################################################
 
-objects = $(DL_FILE)
+objects = $(DL_FILE) icingaweb2-$(ICINGAWEB2_VER).tar.gz
 
-$(DL_FILE) = $(DL_FROM)/$(DL_FILE)
+$(DL_FILE) = $(DL_FROM)/v$(VER).tar.gz
+icingaweb2-$(ICINGAWEB2_VER).tar.gz = $(ICINGAWEB2_DL_FROM)/v$(ICINGAWEB2_VER).tar.gz
 
-$(DL_FILE)_MD5 = 319c6ffbbeccc366f14bb68767a6db79
+$(DL_FILE)_MD5 = 661f346c1f75bdecba1f715a5e980be5
+icingaweb2-$(ICINGAWEB2_VER).tar.gz_MD5 = c3bf3e158449b5991690fcd1b6d5c6ac
 
 install : $(TARGET)
 
@@ -71,6 +60,9 @@ check : $(patsubst %,$(DIR_CHK)/%,$(objects))
 download :$(patsubst %,$(DIR_DL)/%,$(objects))
 
 md5 : $(subst %,%_MD5,$(objects))
+
+dist: 
+	@$(PAK)
 
 ###############################################################################
 # Downloading, checking, md5sum
@@ -91,11 +83,49 @@ $(subst %,%_MD5,$(objects)) :
 
 $(TARGET) : $(patsubst %,$(DIR_DL)/%,$(objects))
 	@$(PREBUILD)
-	@rm -rf $(DIR_APP) && cd $(DIR_SRC) && tar axf $(DIR_DL)/$(DL_FILE)
+	@rm -rf $(DIR_APP) && cd $(DIR_SRC) && tar zxf $(DIR_DL)/$(DL_FILE) \
+		&&  rm -rf /usr/share/icingaweb2 \
+		&&  cd $(DIR_APP) && tar zxf $(DIR_DL)/icingaweb2-$(ICINGAWEB2_VER).tar.gz
 
-	cd $(DIR_APP) && ./bootstrap.sh --with-toolset=gcc
-	cd $(DIR_APP) && ./b2 -d+2 -q $(CONFIGURE_OPTIONS) stage
-	cd $(DIR_APP) && ./b2 $(CONFIGURE_OPTIONS) install
+	cd $(DIR_APP) && sed "/examples/d" -i CMakeLists.txt
+	
+	cd $(DIR_APP) && mkdir build
+	cd $(DIR_APP)/build && cmake .. \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LOCALSTATEDIR=/var \
+		-DCMAKE_INSTALL_FULL_LOCALSTATEDIR=/var \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_SKIP_RPATH=1 \
+		-DICINGA2_WITH_PGSQL=off \
+		-DICINGA2_WITH_TESTS=off \
+		-DICINGA2_GIT_VERSION_INFO=off
+	cd $(DIR_APP)/build && make $(PARALELLISMFLAGS)
+	cd $(DIR_APP)/build && make install
 
-	@rm -rf $(DIR_APP)
+	ln -sf /usr/etc/icinga2             /etc/icinga2
+	ln -sf /usr/etc/init.d/icinga2 	    /etc/init.d/icinga2
+	ln -sf /usr/etc/logrotate.d/icinga2 /etc/logrotate.d/icinga2
+
+	cp /usr/lib64/libboost_program_options* /usr/lib/icinga2
+
+	ldconfig /usr/lib/icinga2
+
+	/usr/sbin/icinga2 feature enable ido-mysql
+	/usr/sbin/icinga2 feature enable command
+
+	/bin/mv $(DIR_APP)/icingaweb2-$(ICINGAWEB2_VER) /usr/share/icingaweb2
+
+	mkdir -p  /etc/icingaweb2/modules/monitoring
+
+	install -v -m 644 $(DIR_SRC)/config/icinga2/icingaweb2.conf                  /etc/httpd/conf/vhosts.d
+	install -v -m 644 $(DIR_SRC)/config/icinga2/authentication.ini               /etc/icingaweb2
+	install -v -m 644 $(DIR_SRC)/config/icinga2/config.ini                       /etc/icingaweb2
+	install -v -m 644 $(DIR_SRC)/config/icinga2/resources.ini                    /etc/icingaweb2
+	install -v -m 644 $(DIR_SRC)/config/icinga2/roles.ini                        /etc/icingaweb2
+	install -v -m 644 $(DIR_SRC)/config/icinga2/monitoring_backends.ini          /etc/icingaweb2/modules/monitoring
+	install -v -m 644 $(DIR_SRC)/config/icinga2/monitoring_config.ini            /etc/icingaweb2/modules/monitoring
+
+	chown -R nobody:nobody /etc/icingaweb2
+
+	@rm -rf $(DIR_APP) 
 	@$(POSTBUILD)

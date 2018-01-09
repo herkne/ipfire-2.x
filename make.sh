@@ -1524,6 +1524,8 @@ buildipfire() {
   lfsmake2 perl-Net-IP
   lfsmake2 wio
   lfsmake2 iftop
+  lfsmake2 monitoring-plugins
+  lfsmake2 icinga2
 }
 
 buildinstaller() {
